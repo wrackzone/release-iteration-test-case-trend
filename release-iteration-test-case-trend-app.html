@@ -1,0 +1,393 @@
+	<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+	<html>
+	  <head>
+	    <meta name="Name" content="Release Test Case Trend by Iteration" />
+	    <meta name="Version" content="1.0" />
+	    <meta name="Vendor" content="Barry Mullan" />
+	    <!-- default libraries -->
+	    <script type="text/javascript" src="/apps/1.21/sdk.js"></script> 
+	    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js"></script>
+	    <script src="https://datejs.googlecode.com/files/date.js"></script>
+	    <script type='text/javascript' src='https://www.google.com/jsapi'></script>
+	
+	    
+		<script type="text/javascript">
+		var dropdown = null;
+		var rallyDataSource=null;
+		var parseString = "yyyy-MM-ddT00:00:00.000Z";
+	
+		google.load('visualization', '1', {packages:['table','corechart']});
+		google.setOnLoadCallback(function() {
+			
+		init();
+	
+	 	Date.prototype.setISO8601 = function (string) {
+		    var regexp = "([0-9]{4})(-([0-9]{2})(-([0-9]{2})" +
+		        "(T([0-9]{2}):([0-9]{2})(:([0-9]{2})(\.([0-9]+))?)?" +
+		        "(Z|(([-+])([0-9]{2}):([0-9]{2})))?)?)?)?";
+		    var d = string.match(new RegExp(regexp));
+		
+		    var offset = 0;
+		    var date = new Date(d[1], 0, 1);
+		
+		    if (d[3]) { date.setMonth(d[3] - 1); }
+		    if (d[5]) { date.setDate(d[5]); }
+		    if (d[7]) { date.setHours(d[7]); }
+		    if (d[8]) { date.setMinutes(d[8]); }
+		    if (d[10]) { date.setSeconds(d[10]); }
+		    if (d[12]) { date.setMilliseconds(Number("0." + d[12]) * 1000); }
+		    if (d[14]) {
+		        offset = (Number(d[16]) * 60) + Number(d[17]);
+		        offset *= ((d[15] == '-') ? 1 : -1);
+		    }
+		
+		    offset -= date.getTimezoneOffset();
+		    time = (Number(date) + (offset * 60 * 1000));
+		    this.setTime(Number(time));
+		}
+		
+		function convertRallyDate(rallyDate) {
+			var d = new Date();
+			d.setISO8601(rallyDate);
+			return d;
+		}
+	 
+	 	function compareRallyDates(a,b) {
+	 		var aDate = convertRallyDate(a);
+	 		var bDate = convertRallyDate(b);
+	 		if (aDate < bDate)
+	 			return -1;
+	 		if (aDate > bDate)
+	 			return 1;
+	 		return 0;
+	 	}
+	 	
+		// returns a count of testcases created before end of the current iteration.
+		function testCasesInIteration(results, iteration) {
+			
+			var i=0;
+			for(var x = 0; x < results.testcases.length; x++) {
+				var testcase = results.testcases[x];
+				if ( convertRallyDate(testcase.CreationDate) <= convertRallyDate(iteration.EndDate) )
+					i++;
+			}
+			
+			return i;
+		}
+		
+		function chartData(data) {
+			
+			// pivot again					Value	Fail	Pass
+			// Value 1	2	3	4			1		
+			// Fail	 2  1	2	2	-->		2
+			// Pass	 1  1	2	2			3
+			//								4
+			try {
+				var pivot2Data = new google.visualization.DataTable();
+				var verdicts = data.getDistinctValues(0);
+				pivot2Data.addColumn('string','Iteration');
+				for(var x = 0 ; x < verdicts.length ; x++) {
+					pivot2Data.addColumn('number',verdicts[x]);	
+				}
+				pivot2Data.addRows(data.getNumberOfColumns()-1);
+				for(var x=1;x<data.getNumberOfColumns();x++) {
+					pivot2Data.setValue(x-1,0,data.getColumnLabel(x));
+				}
+				for(var x = 0; x < data.getNumberOfRows(); x++) {
+					for(var y=1 ; y < data.getNumberOfColumns(); y++) {
+						//log("["+data.getValue(x,y)+"]");
+						pivot2Data.setValue(y-1,x+1,data.getValue(x,y));
+					}
+				}
+				
+				// setup the colors
+				var verdicts = data.getDistinctValues(0);
+				var ccolors = new Array();
+				var otherColors = new Array("Orange","Coral","Cyan","DarkGreen","Gray","Indigo","Lime");
+				var otherIndex = 0;
+				for (var x = 0 ; x < verdicts.length; x++ ) {
+					log (data.getValue(x,0));
+					if (data.getValue(x,0) == "Pass")
+						ccolors.push("Green");
+					else if (data.getValue(x,0) == "Fail")
+						ccolors.push("Red");
+					else if (data.getValue(x,0) == "Total")
+						ccolors.push("Blue");
+					else
+						ccolors.push(otherColors[otherIndex++]);
+				}
+				
+				log(ccolors.length);
+				var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+				chart.draw(pivot2Data, {width: 800, height: 400, 
+										title: 'Release Test Case Trend by Iteration',
+										colors: ccolors});
+				
+			
+			}
+			catch(e) {
+				log(e);
+			}
+		}
+		
+		// pivots the grouping
+		// Iteration LastVerdict Count				Verdict    1		2
+		// 1         Pass        2			--->	Pass       2        4
+		// 1         Fail        3   				Fail	   3		6
+		// 2         Pass        4
+		// 2         Fail        6
+		function pivot(data) {
+			
+			try {
+				var verdicts = data.getDistinctValues(1);
+				var iterations = data.getDistinctValues(0);
+				
+				var pivotData = new google.visualization.DataTable();
+				
+				// set up columns and rows
+				pivotData.addColumn('string','Value');
+				for(var x = 0 ; x < iterations.length ; x++) {
+					pivotData.addColumn('number',iterations[x]);	
+				}
+				pivotData.addRows(verdicts.length);
+				for(var x = 0 ; x < verdicts.length ; x++) {
+					pivotData.setValue(x,0,verdicts[x]);	
+				}
+				
+				// finally add the data
+				for( var x = 0; x < data.getNumberOfRows(); x++) {
+					var row = indexAt(verdicts, data.getValue(x,1));
+					var col = indexAt(iterations,data.getValue(x,0))+1;
+					var val = data.getValue(x,2);
+					pivotData.setValue(row,col,val);	
+				}
+			}
+			catch(e) {
+				log(e);
+			}
+			return pivotData;	
+		}
+	
+		function drawTable(data,div) {
+			// draw the table		
+			var table = new google.visualization.Table(document.getElementById(div));
+			table.draw(data, {showRowNumber: false, allowHtml : true});
+		}
+		
+		function indexAt(arr,str) {
+			for(var x = 0; x < arr.length; x++)
+				if (arr[x] == str)
+					return x;
+			return -1;	
+		}
+	
+	 	function lastVerdict(values) { 
+	 		if (values.length>0)
+				return values[values.length-1];
+			else
+				return null;
+		}
+		
+		function count(values) {
+			return values.length;	
+		}
+		
+		function groupIterationTestCasesByVerdict(iteration, data) {
+			// data=  iteration,tcid,date,verdict
+			var verdictGroup = google.visualization.data.group(data, 
+	 		                     [0,3], 
+	 		                    [{'column': 2, 'aggregation': count, 'type': 'number','label':'count'}]
+			);
+			return verdictGroup;
+		}
+		
+		function logTable(data) {
+			for (var r = 0 ; r < data.getNumberOfRows(); r++ ) {
+				var msg = "";
+				for (var c = 0 ; c < data.getNumberOfColumns(); c++) {
+						msg+= (data.getValue(r,c)+" : ");
+				}
+				log( msg+"<br/>");
+			}	
+		}
+	
+	
+		// copy one google table to another
+		function addTable(table_to, table_from) {
+			for ( var r = 0 ; r < table_from.getNumberOfRows(); r++ ) {
+				var arr = new Array();
+				for ( var c = 0 ; c < table_from.getNumberOfColumns(); c++ )
+					arr.push(table_from.getValue(r,c));
+	
+				table_to.addRow(arr);
+			}
+		}
+	
+		function createIterationTCDataTable() {
+			var iterationTCData = new google.visualization.DataTable();
+			iterationTCData.addColumn('string', 'Iteration');
+			iterationTCData.addColumn('string', 'TestCase');
+			iterationTCData.addColumn('date', 'Date');
+			iterationTCData.addColumn('string', 'Verdict');
+			return iterationTCData;
+		}
+	
+		function createSummaryTCDataTable() {
+			var summaryData = new google.visualization.DataTable();
+			summaryData.addColumn('string', 'Iteration');
+			summaryData.addColumn('string', 'Verdict');
+			summaryData.addColumn('number', 'Count');
+			return summaryData;
+		}
+		
+		// returns a table per iteration, grouped by verdict (including total and not run)
+		function groupTestCasesByIteration(iteration, results) {
+			
+			//log(iteration.Name);
+			var iterationTCData = createIterationTCDataTable();
+		
+			for (var i = 0 ; i < results.testcases.length ; i++ ) {
+				var testcase = results.testcases[i];
+	
+				// did the test case exist in this iteration			
+				if ( compareRallyDates(testcase.CreationDate, iteration.EndDate) > 0)
+					continue;
+	
+				tcCount = 0;
+				testcase.Results.sort(function(a,b){ 
+					return compareRallyDates(a.Date,b.Date);	
+				});
+				var stack = new Array();
+				var resultAdded = false;
+				for ( var r = 0 ; r < testcase.Results.length ; r++ ) { 
+					var result = testcase.Results[r];
+					
+					// did this result occur before the end of the iteration
+					if ( compareRallyDates(result.Date, iteration.EndDate ) <=0 )
+						stack.push(result);
+					else 
+						break;
+				}
+				
+				if (stack.length==0 || testcase.Results.length==0)
+						iterationTCData.addRow([iteration.Name,
+												testcase.FormattedID,
+												null,
+												"Not Run"]);
+				else {
+					if (stack.length > 0) {
+						var result = stack.pop();					
+							iterationTCData.addRow([iteration.Name,
+													testcase.FormattedID,
+													convertRallyDate(result.Date),
+													result.Verdict])
+					}
+				}
+				// add a Total verdict which will be counted.
+				iterationTCData.addRow([iteration.Name,
+										testcase.FormattedID,
+										null,
+										"Total"]);
+			}
+			
+			return groupIterationTestCasesByVerdict(iteration, iterationTCData);
+		}
+		
+		
+		// returns a single table with the test case counts by verdict (including total and not run) for all iterations
+		function groupTestCasesByIterations(results) {
+			
+			tcTable = createSummaryTCDataTable();
+		
+			for (var x = 0 ; x < results.iterations.length ; x++ ) {
+				var iteration = results.iterations[x];
+				try {
+					var iterationTable = groupTestCasesByIteration(iteration,results);
+					if (iterationTable.getNumberOfRows()==0)
+						iterationTable.addRow([iteration.Name,"Total",0]); 
+					addTable(tcTable, iterationTable );	
+				}
+				catch(e) {
+					log(e);	
+				}
+			}
+			return tcTable;		
+		}
+	
+	 	function populateApp(results) {
+	 		$("#spinner").remove();
+	 		
+			var resultsData = new google.visualization.DataTable();
+			resultsData.addColumn('string', 'Iteration');
+			resultsData.addColumn('string', 'TestCase');
+			resultsData.addColumn('date', 'Date');
+			resultsData.addColumn('string', 'Verdict');
+	
+			var tcTable = groupTestCasesByIterations(results);
+			
+			var pivotTable = pivot(tcTable);
+			drawTable(pivotTable,"pivot_table");
+			chartData(pivotTable);
+	 	}
+	 
+		function runQuery(){
+			
+			var from = new Date(dropdown.getSelectedStart()).toString("yyyy-MM-ddT00:00:00.000Z");
+			var to   = new Date(dropdown.getSelectedEnd()).toString("yyyy-MM-ddT23:59:59.000Z");
+	
+			var query = '(( StartDate >= ' + from + ' ) and ( StartDate <= ' + to + ' ) )';
+			//log(from); log(to); log(query);
+	 		
+			var queryArray = new Array();
+			queryArray.push( {
+				key: 'testcases',
+				type: 'testcase',
+				query: '',
+				order: '',
+				fetch: 'ObjectID,FormattedID,Name,Results,Date,Verdict,CreationDate'					
+			});
+			
+			queryArray.push( {
+				key: 'iterations',
+				type: 'iteration',
+				query: query,
+				order: 'EndDate',
+				fetch: 'ObjectID,Name,StartDate,EndDate,Project'					
+			});
+			
+			$("#log").append('<img id="spinner" src="/slm/images/icon_spinner.gif"/>');
+	
+			rallyDataSource.findAll(queryArray, populateApp);                                                             
+		}
+		
+		function init() {
+		
+			rallyDataSource = new rally.sdk.data.RallyDataSource('__WORKSPACE_OID__',
+	                                                             '__PROJECT_OID__',
+	                                                             '__PROJECT_SCOPING_UP__',
+	                                                             '__PROJECT_SCOPING_DOWN__');
+	
+			dropdown = new rally.sdk.ui.ReleaseDropdown({label: "Select a release "}, rallyDataSource);
+			dropdown.display("release", runQuery);
+	
+		}
+	
+		function log(msg) {
+			// $("#log").append(""+msg+"</br>");	
+		}
+	});	
+	
+		
+	</script>
+	    <!-- end mashup script -->
+	  </head>
+	  <body>
+	     <div id="release"></div>
+	     <div id="main"></div>
+	     <div id="data_box"></div>
+	     <div id="chart_div"></div>
+	     <div id="pivot_table"></div>
+	     <div id="log"></div>
+	
+	  </body>
+	</html>
